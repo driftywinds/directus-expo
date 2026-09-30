@@ -1,0 +1,21 @@
+{
+	"name": "docs",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"spellcheck": "spellchecker -p spell indefinite-article repeated-words syntax-mentions syntax-urls frontmatter",
+		"dev": "vitepress dev",
+		"build": "vitepress build",
+		"preview": "vitepress preview"
+	},
+	"devDependencies": {
+		"@unhead/vue": "^2.0.0",
+		"spellchecker-cli": "7.0.4",
+		"vitepress": "1.6.4",
+		"vue": "3.5.27"
+	},
+	"dependencies": {
+		"node-fetch": "3.3.2"
+	},
+	"version": "10.1.1"
+}
