@@ -32,13 +32,9 @@ import { X } from "./icons/X";
 WebBrowser.maybeCompleteAuthSession();
 
 function navigateAfterAuthSuccess() {
-  // Defer navigation by a frame so React state (isAuthenticated) flushes
-  // before the auth guard in (app)/_layout re-evaluates.
-  setTimeout(() => {
-    const next = takePendingDeepLinkHref();
-    if (next) router.replace(next as any);
-    else router.push("/");
-  }, 0);
+  const next = takePendingDeepLinkHref();
+  if (next) router.replace(next as any);
+  else router.push("/");
 }
 
 function hasDirectusHost(url: string): boolean {
