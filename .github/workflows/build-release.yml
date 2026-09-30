@@ -9,7 +9,8 @@
 #   KEY_PASSWORD          — Key password
 #
 # Firebase / Push:
-#   GOOGLE_SERVICES_JSON  — Content of google-services.json (for FCM push on Android)
+#   GOOGLE_SERVICES_JSON  — Base64-encoded content of google-services.json
+#                           (encode it to avoid shell/JSON quote issues)
 #
 # Expo (for EAS Update URL consistency; not required for the build itself):
 #   EXPO_TOKEN            — Expo token (if you ever want `eas update`)
@@ -75,7 +76,7 @@ jobs:
 
       - name: Write google-services.json
         run: |
-          echo "${{ secrets.GOOGLE_SERVICES_JSON }}" > android/app/google-services.json
+          echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 -d > android/app/google-services.json
           echo "google-services.json written ($(wc -c < android/app/google-services.json) bytes)"
 
       - name: Build release AAB
