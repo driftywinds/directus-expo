@@ -1,0 +1,139 @@
+# 🔐 Required GitHub Secrets
+#
+# Set these in your repo: Settings → Secrets and variables → Actions
+#
+# Signing:
+#   KEYSTORE_BASE64       — Base64-encoded .jks keystore file
+#   KEYSTORE_PASSWORD     — Keystore password
+#   KEY_ALIAS             — Key alias (e.g. "release")
+#   KEY_PASSWORD          — Key password
+#
+# Firebase / Push:
+#   GOOGLE_SERVICES_JSON  — Content of google-services.json (for FCM push on Android)
+#
+# Expo (for EAS Update URL consistency; not required for the build itself):
+#   EXPO_TOKEN            — Expo token (if you ever want `eas update`)
+
+name: Build Release APK/AAB
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build type"
+        required: true
+        default: "release"
+        type: choice
+        options:
+          - release
+          - staging
+
+jobs:
+  build:
+    name: Build Android Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "yarn"
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: |
+          yarn install --frozen-lockfile
+          echo "node_modules size: $(du -sh node_modules | cut -f1)"
+
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.keystore
+          echo "Keystore written ($(stat -c%s android/app/release.keystore) bytes)"
+
+      - name: Write google-services.json
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICES_JSON }}" > google-services.json
+          echo "google-services.json written ($(wc -c < google-services.json) bytes)"
+
+      - name: Build release AAB
+        env:
+          KEYSTORE_PATH: android/app/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          cd android
+          ./gradlew bundleRelease --no-daemon
+
+      - name: Build release APK (universal)
+        env:
+          KEYSTORE_PATH: android/app/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          cd android
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Locate APK artifact
+        id: apk_artifact
+        run: |
+          APK=$(find android/app/build/outputs/apk/release -name "*.apk" ! -name "*unsigned*" | head -1)
+          echo "path=$APK" >> $GITHUB_OUTPUT
+          echo "name=$(basename $APK)" >> $GITHUB_OUTPUT
+
+      - name: Locate AAB artifact
+        id: aab_artifact
+        run: |
+          AAB=$(find android/app/build/outputs/bundle/release -name "*.aab" | head -1)
+          echo "path=$AAB" >> $GITHUB_OUTPUT
+          echo "name=$(basename $AAB)" >> $GITHUB_OUTPUT
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk_artifact.outputs.name }}
+          path: ${{ steps.apk_artifact.outputs.path }}
+          if-no-files-found: error
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.aab_artifact.outputs.name }}
+          path: ${{ steps.aab_artifact.outputs.path }}
+          if-no-files-found: error
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Build ${{ github.run_number }}"
+          body: |
+            Automated build from commit ${{ github.sha }}
+            
+            ## Assets
+            - ${{ steps.apk_artifact.outputs.name }}
+            - ${{ steps.aab_artifact.outputs.name }}
+          files: |
+            ${{ steps.apk_artifact.outputs.path }}
+            ${{ steps.aab_artifact.outputs.path }}
+          generate_release_notes: false

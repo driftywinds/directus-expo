@@ -13,11 +13,14 @@ expo-env.d.ts
 # Native
 *.orig.*
 *.jks
+*.bks
 *.p8
 *.p12
 *.key
+*.keystore
 *.mobileprovision
 google-services.json
+debug.keystore
 
 # Metro
 .metro-health-check*
