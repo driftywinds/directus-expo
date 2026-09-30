@@ -50,18 +50,23 @@ jobs:
           cache: "yarn"
 
       - name: Setup JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: "temurin"
           java-version: "17"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "build-tools;36.0.0 platform-tools platforms;android-36"
 
       - name: Install dependencies
         run: |
           yarn install --frozen-lockfile
           echo "node_modules size: $(du -sh node_modules | cut -f1)"
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
 
       - name: Decode keystore
         run: |

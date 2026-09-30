@@ -53,5 +53,8 @@ build-*.tar.gz
 
 .env
 
+# Logs
+logs/
+
 database
 uploads
