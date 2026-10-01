@@ -1,11 +1,4 @@
-import {
-  CoreSchema,
-  createPolicy,
-  createRole,
-  DirectusPolicy,
-  importFile,
-  uploadFiles,
-} from "@directus/sdk";
+import { commands } from "@/compat9";
 import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMutation } from "@tanstack/react-query";
@@ -39,7 +32,7 @@ export const addUploadFiles = () => {
           } as any);
         }
 
-        const file = await directus?.request(uploadFiles(data));
+        const file = await directus?.request(commands.uploadFiles(data));
         return file;
       } else return null;
     },
@@ -54,7 +47,7 @@ export const addImportFiles = () => {
   const { directus } = useAuth();
   return useMutation({
     mutationFn: async (url: string) => {
-      const file = await directus?.request(importFile(url));
+      const file = await directus?.request(commands.importFile(url));
       return file;
     },
     onSuccess: (data) => {

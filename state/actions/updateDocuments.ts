@@ -1,19 +1,12 @@
-import {
-  CoreSchema,
-  createItem,
-  createItems,
-  updateItems,
-  updateSingleton,
-} from "@directus/sdk";
+import { commands } from "@/compat9";
 
 import { useAuth } from "@/contexts/AuthContext";
-import { updateItem } from "@directus/sdk";
 import { useMutation } from "@tanstack/react-query";
 import { coreCollections } from "../queries/directus/core";
 import { useCollection } from "../queries/directus/collection";
 
 export const mutateDocuments = (
-  collection: keyof CoreSchema,
+  collection: string,
   id: number | string | "+"
 ) => {
   const { directus, user } = useAuth();
@@ -25,7 +18,7 @@ export const mutateDocuments = (
     : useMutation({
         mutationFn: (data: Record<string, any>) => {
           console.log("createItem", collection, id);
-          return directus!.request(createItems(collection, data as any));
+          return directus!.request(commands.createItem(collection, data));
         },
       });
 

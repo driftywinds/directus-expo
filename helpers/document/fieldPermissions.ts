@@ -1,8 +1,7 @@
 import {
   CoreSchema,
-  ReadPermissionOutput,
-  ReadUserPermissionsOutput,
-} from "@directus/sdk";
+  type ReadUserPermissionsOutput,
+} from "@/compat9";
 
 export const getCanCreate = ({
   field,

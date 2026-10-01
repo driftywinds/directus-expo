@@ -26,11 +26,10 @@ import {
 } from "@/state/queries/directus/core";
 import {
   CoreSchema,
-  ReadRelationOutput,
-  readItemPermissions,
-  ReadUserPermissionsOutput,
-} from "@directus/sdk";
-import { ReadFieldOutput } from "@directus/sdk";
+  type ReadRelationOutput,
+  type ReadFieldOutput,
+  type ReadUserPermissionsOutput,
+} from "@/compat9";
 import { ReactNode } from "react";
 import { Controller, UseFormReturn } from "react-hook-form";
 import { Linking, Pressable, View } from "react-native";

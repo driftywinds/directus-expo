@@ -1,18 +1,12 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import {
-  authentication,
-  AuthenticationClient,
-  AuthenticationData,
-  CoreSchema,
-  createDirectus,
-  DirectusClient,
-  DirectusUser,
-  readMe,
-  readPolicyGlobals,
-  readSettings,
-  rest,
-  RestClient,
-} from "@directus/sdk";
+  createD9Client,
+  commands,
+  type D9Client,
+  type CoreSchema,
+  type DirectusUser,
+  type AuthenticationData,
+} from "@/compat9";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Linking from "expo-linking";
 import { router } from "expo-router";
@@ -22,6 +16,7 @@ import {
   clearSessionStorage,
   readSessionWrapper,
   writeSessionWrapper,
+  type DirectusSessionWrapper,
 } from "@/state/auth/directusSessionStorage";
 import {
   readActiveSessionId,
@@ -41,11 +36,7 @@ interface AuthContextType {
   isLoading: boolean;
   user: DirectusUser | null;
   policyGlobals: PolicyGlobals | null;
-  directus:
-    | (DirectusClient<CoreSchema> &
-        AuthenticationClient<CoreSchema> &
-        RestClient<CoreSchema>)
-    | null;
+  directus: D9Client | null;
   login: (
     email: string,
     password: string,
@@ -82,50 +73,48 @@ function getUserLabel(me: DirectusUser): string | undefined {
   return undefined;
 }
 
+/** D9 doesn't have /permissions/me – we derive policy info from /users/me (the current user's role). */
+async function derivePolicyGlobalsFromUser(
+  client: D9Client,
+  userId?: string,
+): Promise<PolicyGlobals | null> {
+  try {
+    const me = await client.request<Record<string, any>>(commands.readMe());
+    // D9 users have a `role` field which contains the role UUID.
+    // Fetch the role to get admin_access / app_access / enforce_tfa.
+    const roleId = me?.role;
+    if (roleId) {
+      const role = await client.request<Record<string, any>>(commands.readRole(roleId));
+      if (role && typeof role.admin_access === "boolean") {
+        return {
+          app_access: role.app_access === true,
+          admin_access: role.admin_access === true,
+          enforce_tfa: role.enforce_tfa === true,
+        };
+      }
+    }
+    // Fallback: deduce from me fields if role not fetchable
+    return {
+      app_access: (me as any)?.app_access !== false,
+      admin_access: (me as any)?.admin_access === true,
+      enforce_tfa: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [directus, setDirectus] = useState<
-    DirectusClient<CoreSchema> &
-      AuthenticationClient<CoreSchema> &
-      RestClient<CoreSchema>
-  >(() =>
-    createDirectusClient(
-      PLACEHOLDER_URL,
-      PLACEHOLDER_SESSION_ID,
-      PLACEHOLDER_API_ID,
-    ),
-  );
+  const [directus, setDirectus] = useState<D9Client | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<DirectusUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [policyGlobals, setPolicyGlobals] = useState<PolicyGlobals | null>(
-    null,
-  );
+  const [policyGlobals, setPolicyGlobals] = useState<PolicyGlobals | null>(null);
 
-  const fetchAndSetPolicyGlobals = async (
-    client: DirectusClient<CoreSchema> &
-      AuthenticationClient<CoreSchema> &
-      RestClient<CoreSchema>,
-  ) => {
-    try {
-      const data = await client.request(readPolicyGlobals());
-      const raw = data as Record<string, unknown>;
-      if (
-        raw &&
-        typeof raw.app_access === "boolean" &&
-        typeof raw.admin_access === "boolean"
-      ) {
-        setPolicyGlobals({
-          app_access: raw.app_access,
-          admin_access: raw.admin_access,
-          enforce_tfa: raw.enforce_tfa === true,
-        });
-      } else {
-        setPolicyGlobals(null);
-      }
-    } catch {
-      setPolicyGlobals(null);
-    }
+  const fetchAndSetPolicyGlobals = async (client: D9Client, userId?: string) => {
+    const pg = await derivePolicyGlobalsFromUser(client, userId);
+    setPolicyGlobals(pg);
   };
 
   const logoutFrom401 = async () => {
@@ -141,65 +130,59 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setToken(null);
       setUser(null);
       setPolicyGlobals(null);
-      setDirectus(
-        createDirectusClient(
-          PLACEHOLDER_URL,
-          PLACEHOLDER_SESSION_ID,
-          PLACEHOLDER_API_ID,
-        ),
-      );
+      setDirectus(null);
       router.push("/login");
     } catch {
       /* ignore */
     }
   };
 
-  function createDirectusClient(
+  function createD9ClientForStorage(
     url: string,
     sessionId: string,
     apiId: string,
-  ): DirectusClient<CoreSchema> &
-    AuthenticationClient<CoreSchema> &
-    RestClient<CoreSchema> {
-    return createDirectus(url)
-      .with(
-        authentication("json", {
-          autoRefresh: true,
-          credentials: "include",
-          storage: {
-            get: async () => {
-              try {
-                const w = await readSessionWrapper(sessionId);
-                return (w?.sdk ?? null) as AuthenticationData | null;
-              } catch {
-                return null;
-              }
-            },
-            set: async (value) => {
-              const prev = await readSessionWrapper(sessionId);
-              const next = {
-                apiId: apiId || prev?.apiId || "",
-                authType: "email" as const,
-                sdk: value ?? null,
-                apiKey: prev?.apiKey ?? null,
-                userLabel: prev?.userLabel,
-                instanceUrl: prev?.instanceUrl ?? url,
-              };
-              await writeSessionWrapper(sessionId, next);
-            },
-          },
-        }),
-      )
-      .with(
-        rest({
-          onResponse: async (response) => {
-            if (response.status === 401) {
-              await logoutFrom401();
-            }
-            return response;
-          },
-        }),
-      );
+  ): D9Client {
+    return createD9Client(url, {
+      get: async () => {
+        try {
+          const w = await readSessionWrapper(sessionId);
+          if (!w?.sdk) return null;
+          return {
+            accessToken: w.sdk.access_token,
+            refreshToken: w.sdk.refresh_token,
+            expires: w.sdk.expires,
+          };
+        } catch {
+          return null;
+        }
+      },
+      set: async (value) => {
+        const prev = await readSessionWrapper(sessionId);
+        const next: DirectusSessionWrapper = {
+          apiId: apiId || prev?.apiId || "",
+          authType: "email",
+          sdk: value ? {
+            access_token: value.accessToken ?? "",
+            refresh_token: value.refreshToken ?? "",
+            expires: value.expires ?? 0,
+          } : null,
+          apiKey: prev?.apiKey ?? null,
+          userLabel: prev?.userLabel,
+          instanceUrl: prev?.instanceUrl ?? url,
+        };
+        await writeSessionWrapper(sessionId, next);
+      },
+      clear: async () => {
+        // Auth is cleared through normal session wrapper updates
+        const prev = await readSessionWrapper(sessionId);
+        if (prev) {
+          await writeSessionWrapper(sessionId, {
+            ...prev,
+            sdk: null,
+          });
+        }
+      },
+    });
   }
 
   useEffect(() => {
@@ -223,24 +206,24 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       switch (authType) {
         case "email":
           try {
-            const client = createDirectusClient(url, sessionId, apiId);
+            const client = createD9ClientForStorage(url, sessionId, apiId);
             setDirectus(client);
 
-            const wrapper = await readSessionWrapper(sessionId);
-            if (!wrapper?.sdk) break;
+            const stored = await readSessionWrapper(sessionId);
+            if (!stored?.sdk?.refresh_token) break;
 
             await client.refresh();
 
             const freshToken = await client.getToken();
             if (!freshToken) break;
 
-            const me = await client.request(readMe());
-            await client.request(readSettings());
+            const me = await client.request<Record<string, any>>(commands.readMe());
+            await client.request(commands.readSettings());
 
             setToken(freshToken);
             setUser(me as DirectusUser);
             setIsAuthenticated(true);
-            await fetchAndSetPolicyGlobals(client);
+            await fetchAndSetPolicyGlobals(client, me?.id);
           } catch {
             try {
               await clearSessionStorage(sessionId);
@@ -251,36 +234,25 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           break;
         case "apiKey": {
           try {
-            const wrapper = await readSessionWrapper(sessionId);
-            const storedKey = wrapper?.apiKey;
+            const stored = await readSessionWrapper(sessionId);
+            const storedKey = stored?.apiKey;
             if (!storedKey) break;
 
-            const client = createDirectus(url)
-              .with(authentication())
-              .with(
-                rest({
-                  onResponse: async (response) => {
-                    if (response.status === 401) {
-                      await logoutFrom401();
-                    }
-                    return response;
-                  },
-                }),
-              );
-            setDirectus(client as typeof client & RestClient<CoreSchema>);
-            await client.setToken(storedKey);
-            const me = await client.request(readMe());
+            const client = createD9Client(url, {
+              get: async () => ({ accessToken: storedKey, refreshToken: null, expires: null }),
+              set: async () => {},
+              clear: async () => {},
+            });
+            setDirectus(client);
+
+            const me = await client.request<Record<string, any>>(commands.readMe());
             const tok = await client.getToken();
             if (!tok) break;
 
             setToken(tok);
             setUser(me as DirectusUser);
             setIsAuthenticated(true);
-            await fetchAndSetPolicyGlobals(
-              client as DirectusClient<CoreSchema> &
-                AuthenticationClient<CoreSchema> &
-                RestClient<CoreSchema>,
-            );
+            await fetchAndSetPolicyGlobals(client, me?.id);
           } catch {
             try {
               await clearSessionStorage(sessionId);
@@ -291,7 +263,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           break;
         }
         default: {
-          setDirectus(createDirectusClient(url, sessionId, apiId));
+          setDirectus(createD9ClientForStorage(url, sessionId, apiId));
           break;
         }
       }
@@ -310,17 +282,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     sessionId: string,
     apiId: string,
   ) => {
-    const client = createDirectusClient(apiUrl, sessionId, apiId);
+    const client = createD9ClientForStorage(apiUrl, sessionId, apiId);
     setDirectus(client);
     await client.login(email, password);
     const tok = await client.getToken();
     if (!tok) throw new Error("Missing access token");
-    const me = await client.request(readMe());
+    const me = await client.request<Record<string, any>>(commands.readMe());
     const prev = await readSessionWrapper(sessionId);
+    const storedAuth = prev?.sdk;
     await writeSessionWrapper(sessionId, {
       apiId,
       authType: "email",
-      sdk: prev?.sdk ?? null,
+      sdk: storedAuth ?? null,
       apiKey: prev?.apiKey ?? null,
       userLabel: getUserLabel(me as DirectusUser),
       instanceUrl: apiUrl,
@@ -328,7 +301,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setUser(me as DirectusUser);
     setToken(tok);
     setIsAuthenticated(true);
-    await fetchAndSetPolicyGlobals(client);
+    await fetchAndSetPolicyGlobals(client, me?.id);
   };
 
   const refreshSession = async (override?: RefreshSessionTarget) => {
@@ -358,29 +331,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       const wrapper = await readSessionWrapper(sessionId);
 
-      // Static-token sessions first so leftover sdk fields never trigger OAuth refresh.
+      // Static-token sessions
       if (wrapper?.authType === "apiKey") {
         const key = wrapper.apiKey?.trim();
         if (!key) return { ok: false };
-        const client = createDirectus(apiUrl)
-          .with(authentication())
-          .with(
-            rest({
-              onResponse: async (response) => {
-                if (response.status === 401) {
-                  await logoutFrom401();
-                }
-                return response;
-              },
-            }),
-          );
-        setDirectus(client as DirectusClient<CoreSchema> &
-          AuthenticationClient<CoreSchema> &
-          RestClient<CoreSchema>);
-        await client.setToken(key);
+        const client = createD9Client(apiUrl, {
+          get: async () => ({ accessToken: key, refreshToken: null, expires: null }),
+          set: async () => {},
+          clear: async () => {},
+        });
+        setDirectus(client);
+        const me = await client.request<Record<string, any>>(commands.readMe());
         const tok = await client.getToken();
         if (tok) {
-          const me = await client.request(readMe());
           await writeSessionWrapper(sessionId, {
             apiId: wrapper.apiId ?? "",
             authType: "apiKey",
@@ -397,20 +360,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         return { ok: false };
       }
 
-      // Email / legacy: OAuth refresh via stored refresh_token only (unchanged behavior).
-      const isEmailAuth =
-        !wrapper?.authType || wrapper.authType === "email";
+      // Email / JWT sessions: try refresh
+      const isEmailAuth = !wrapper?.authType || wrapper.authType === "email";
       if (isEmailAuth && wrapper?.sdk?.refresh_token) {
-        const client = createDirectusClient(
-          apiUrl,
-          sessionId,
-          wrapper.apiId ?? "",
-        );
+        const client = createD9ClientForStorage(apiUrl, sessionId, wrapper.apiId ?? "");
         setDirectus(client);
         await client.refresh();
         const freshToken = await client.getToken();
         if (freshToken) {
-          const me = await client.request(readMe());
+          const me = await client.request<Record<string, any>>(commands.readMe());
           const afterRefresh = await readSessionWrapper(sessionId);
           await writeSessionWrapper(sessionId, {
             apiId: wrapper.apiId ?? "",
@@ -439,31 +397,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     sessionId: string,
     apiId: string,
   ) => {
-    const client = createDirectus(apiUrl)
-      .with(authentication())
-      .with(
-        rest({
-          onResponse: async (response) => {
-            if (response.status === 401) {
-              await logoutFrom401();
-            }
-            return response;
-          },
-        }),
-      );
-    setDirectus(client as DirectusClient<CoreSchema> &
-      AuthenticationClient<CoreSchema> &
-      RestClient<CoreSchema>);
-    await client.setToken(apiKey);
-    const me = await client.request(readMe());
+    const client = createD9Client(apiUrl, {
+      get: async () => ({ accessToken: apiKey, refreshToken: null, expires: null }),
+      set: async () => {},
+      clear: async () => {},
+    });
+    setDirectus(client);
+    const me = await client.request<Record<string, any>>(commands.readMe());
     setToken(apiKey);
     setUser(me as DirectusUser);
     setIsAuthenticated(true);
-    await fetchAndSetPolicyGlobals(
-      client as DirectusClient<CoreSchema> &
-        AuthenticationClient<CoreSchema> &
-        RestClient<CoreSchema>,
-    );
+    await fetchAndSetPolicyGlobals(client, me?.id);
     await writeSessionWrapper(sessionId, {
       apiId,
       authType: "apiKey",
@@ -492,9 +436,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         );
       }
 
-      setDirectus(
-        createDirectusClient(PLACEHOLDER_URL, PLACEHOLDER_SESSION_ID, PLACEHOLDER_API_ID),
-      );
+      setDirectus(null);
       setIsAuthenticated(false);
       setToken(null);
       setUser(null);
@@ -504,9 +446,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
-  // Keep children mounted while restoring the session so the router and deep-link handler run.
-  // Returning null here caused a white screen on cold start (e.g. widget → app). Loading UI
-  // lives in `(app)/_layout` (and login mounts without blocking on auth init).
   return (
     <AuthContext.Provider
       value={{

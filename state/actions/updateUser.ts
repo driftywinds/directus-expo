@@ -1,12 +1,11 @@
-import { CoreSchema, DirectusUser, updateUser } from "@directus/sdk";
-
+import { commands } from "@/compat9";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMutation } from "@tanstack/react-query";
 
 export const mutateUser = (id: string) => {
   const { directus } = useAuth();
   return useMutation({
-    mutationFn: (data: Partial<DirectusUser>) =>
-      directus!.request(updateUser(id, data)),
+    mutationFn: (data: Record<string, any>) =>
+      directus!.request(commands.updateUser(id, data)),
   });
 };

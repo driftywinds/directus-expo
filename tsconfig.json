@@ -4,7 +4,8 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@directus/sdk": ["./compat9/shim.ts"]
     },
     "jsx": "react-jsx",
     "esModuleInterop": true

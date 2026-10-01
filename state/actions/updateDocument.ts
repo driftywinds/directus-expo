@@ -1,50 +1,48 @@
-import { CoreSchema, createItem, updateSingleton } from "@directus/sdk";
-
+import { commands } from "@/compat9";
 import { useAuth } from "@/contexts/AuthContext";
-import { updateItem } from "@directus/sdk";
 import { useMutation } from "@tanstack/react-query";
-import { coreCollections } from "../queries/directus/core";
 import { useCollection } from "../queries/directus/collection";
+import { coreCollections } from "../queries/directus/core";
+import { queryClient } from "@/utils/react-query";
 
 export const mutateDocument = (
-  collection: keyof CoreSchema,
+  collection: string,
   id: number | string | "+"
 ) => {
   const { directus, user } = useAuth();
-  const { data } = useCollection(collection);
-  const {
-    updateItem: updateCoreItem,
-    updateMe,
-    createItem: createCoreItem,
-  } = coreCollections[collection] || {};
+  const { data: collectionData } = useCollection(collection);
+  const coreCollection = coreCollections[collection] as
+    | { updateItem?: (id: string) => any; updateMe?: () => any; createItem?: () => any }
+    | undefined;
 
-  if ((id === "+" || !id) && !data?.meta.singleton) {
-    return createCoreItem
-      ? createCoreItem()
+  if ((id === "+" || !id) && !collectionData?.meta?.singleton) {
+    return coreCollection?.createItem
+      ? coreCollection.createItem()
       : useMutation({
           mutationFn: (data: Record<string, unknown>) => {
-            console.log("createItem", collection, id);
-            return directus!.request(createItem(collection, data as any));
+            return directus!.request(commands.createItem(collection, data));
           },
         });
   }
 
-  if (data?.meta.singleton) {
+  if (collectionData?.meta?.singleton) {
     return useMutation({
       mutationFn: (data: Record<string, unknown>) =>
-        directus!.request(updateSingleton(collection as any, data)),
+        directus!.request(commands.updateSingleton(collection, data)),
     });
   }
 
-  if (updateMe && user?.id === id) {
-    return updateMe();
+  if (coreCollection?.updateMe && user?.id === id) {
+    return coreCollection.updateMe();
   }
-  return updateCoreItem
-    ? updateCoreItem(id as string)
+  return coreCollection?.updateItem
+    ? coreCollection.updateItem(id as string)
     : useMutation({
         mutationFn: (data: Record<string, unknown>) =>
           directus!.request(
-            updateItem(collection as keyof CoreSchema, id, data)
+            commands.updateItem(collection, id, data)
           ),
       });
 };
+
+// Keep router alive

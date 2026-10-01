@@ -1,19 +1,11 @@
-import {
-  CoreSchema,
-  createRole,
-  DirectusRole,
-  DirectusUser,
-  updateRole,
-  updateUser,
-} from "@directus/sdk";
-
+import { commands } from "@/compat9";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMutation } from "@tanstack/react-query";
 
 export const addRole = () => {
   const { directus } = useAuth();
   return useMutation({
-    mutationFn: (data: Partial<DirectusRole>) =>
-      directus!.request(createRole(data)),
+    mutationFn: (data: Record<string, any>) =>
+      directus!.request(commands.createRole(data)),
   });
 };

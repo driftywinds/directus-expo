@@ -1,19 +1,12 @@
-import {
-  CoreSchema,
-  createItem,
-  deleteItem,
-  deleteItems,
-  updateSingleton,
-} from "@directus/sdk";
+import { commands } from "@/compat9";
 
 import { useAuth } from "@/contexts/AuthContext";
-import { updateItem } from "@directus/sdk";
 import { useMutation } from "@tanstack/react-query";
 import { coreCollections } from "../queries/directus/core";
 import { useCollection } from "../queries/directus/collection";
 
 export const deleteDocuments = (
-  collection: keyof CoreSchema,
+  collection: string,
   ids: number[] | string[]
 ) => {
   const { directus, user } = useAuth();
@@ -24,6 +17,6 @@ export const deleteDocuments = (
     ? removeCoreItems(ids as string[])
     : useMutation({
         mutationFn: () =>
-          directus!.request(deleteItems(collection as keyof CoreSchema, ids)),
+          directus!.request(commands.deleteItems(collection, ids)),
       });
 };

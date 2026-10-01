@@ -1,7 +1,7 @@
 import { FieldValue } from "@/components/content/RelatedTemplate";
 import { Thumbnail } from "@/components/content/Thumbnail";
 import { DateUtils } from "@/utils/dayjs";
-import { CoreSchema, ReadFieldOutput, ReadRelationOutput } from "@directus/sdk";
+import { CoreSchema, type ReadFieldOutput, type ReadRelationOutput } from "@/compat9";
 import { Image } from "expo-image";
 import { View } from "react-native";
 import { toM2AReadPath, toM2AReadPathEntryRelative } from "@/helpers/collections/getDisplayTemplate";
