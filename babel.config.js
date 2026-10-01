@@ -9,6 +9,7 @@ module.exports = function (api) {
           root: ["./"],
           alias: {
             "@": "./",
+            "@directus/sdk": "./compat9/shim.ts",
           },
         },
       ],

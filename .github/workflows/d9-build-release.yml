@@ -1,0 +1,159 @@
+# 🔐 Required GitHub Secrets
+#
+# Set these in your repo: Settings → Secrets and variables → Actions
+#
+# Signing:
+#   KEYSTORE_BASE64       — Base64-encoded .jks keystore file
+#   KEYSTORE_PASSWORD     — Keystore password
+#   KEY_ALIAS             — Key alias (e.g. "release")
+#   KEY_PASSWORD          — Key password
+#
+# Firebase / Push:
+#   GOOGLE_SERVICES_JSON  — Base64-encoded content of google-services.json
+#
+# Expo:
+#   EXPO_TOKEN            — Expo token (for EAS Update)
+#
+# D9-specific:
+#   D9_SERVER_URL         — (optional) default D9 server URL for pre-fill
+#
+# The app built by this workflow uses the D9 compatibility layer (compat9/)
+# instead of the standard @directus/sdk v18, making it compatible with
+# Directus 9 / D9 API servers.
+
+name: D9 Build Release APK/AAB
+
+on:
+  push:
+    branches:
+      - d9-compat
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build type"
+        required: true
+        default: "release"
+        type: choice
+        options:
+          - release
+          - staging
+
+jobs:
+  build:
+    name: D9 — Build Android Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (d9-compat)
+        uses: actions/checkout@v4
+        with:
+          ref: d9-compat
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "yarn"
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "build-tools;36.0.0 platform-tools platforms;android-36"
+
+      - name: Install dependencies
+        run: |
+          yarn install --frozen-lockfile
+          echo "node_modules size: $(du -sh node_modules | cut -f1)"
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.keystore
+          echo "Keystore written ($(stat -c%s android/app/release.keystore) bytes)"
+
+      - name: Write google-services.json
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 -d > android/app/google-services.json
+          echo "google-services.json written ($(wc -c < android/app/google-services.json) bytes)"
+
+      - name: Build D9 release AAB
+        env:
+          KEYSTORE_PATH: release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # The Babel alias @directus/sdk → compat9/shim.ts is picked up
+          # automatically via babel.config.js; no env flags needed.
+        run: |
+          cd android
+          ./gradlew bundleRelease --no-daemon
+
+      - name: Build D9 release APK (universal)
+        env:
+          KEYSTORE_PATH: release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          cd android
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Locate APK artifact
+        id: apk_artifact
+        run: |
+          APK=$(find android/app/build/outputs/apk/release -name "*.apk" ! -name "*unsigned*" | head -1)
+          echo "path=$APK" >> $GITHUB_OUTPUT
+          echo "name=$(basename $APK)" >> $GITHUB_OUTPUT
+
+      - name: Locate AAB artifact
+        id: aab_artifact
+        run: |
+          AAB=$(find android/app/build/outputs/bundle/release -name "*.aab" | head -1)
+          echo "path=$AAB" >> $GITHUB_OUTPUT
+          echo "name=$(basename $AAB)" >> $GITHUB_OUTPUT
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: d9-${{ steps.apk_artifact.outputs.name }}
+          path: ${{ steps.apk_artifact.outputs.path }}
+          if-no-files-found: error
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: d9-${{ steps.aab_artifact.outputs.name }}
+          path: ${{ steps.aab_artifact.outputs.path }}
+          if-no-files-found: error
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push' && github.ref == 'refs/heads/d9-compat'
+        with:
+          tag_name: d9-build-${{ github.run_number }}
+          name: "D9 Build ${{ github.run_number }}"
+          body: |
+            Automated D9-compatible build from d9-compat branch.
+            Commit: ${{ github.sha }}
+            
+            ## What's different
+            This build uses compat9/ — a lightweight REST client that talks
+            D9 / Directus 9 API instead of the standard @directus/sdk v18.
+            See D9-COMPAT.md for full details.
+            
+            ## Assets
+            - ${{ steps.apk_artifact.outputs.name }}
+            - ${{ steps.aab_artifact.outputs.name }}
+          files: |
+            ${{ steps.apk_artifact.outputs.path }}
+            ${{ steps.aab_artifact.outputs.path }}
+          generate_release_notes: false

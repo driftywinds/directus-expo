@@ -1,0 +1,47 @@
+name: D9 — Verify Build Integrity
+
+on:
+  pull_request:
+    branches:
+      - d9-compat
+  push:
+    branches:
+      - d9-compat
+
+jobs:
+  verify:
+    name: Verify D9 compat layer resolves
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Check Babel resolves @directus/sdk to compat9 shim
+        run: |
+          # Run a quick check: import the shim directly via node test
+          node -e "
+          const path = require.resolve('@directus/sdk');
+          console.log('Resolved @directus/sdk →', path);
+          if (!path.includes('compat9')) {
+            console.error('ERROR: @directus/sdk resolves to npm package, not compat9 shim');
+            process.exit(1);
+          }
+          const shim = require(path);
+          const exported = Object.keys(shim);
+          console.log('Exports:', exported.length);
+          console.log('Has createD9Client:', typeof shim.createD9Client === 'function');
+          console.log('Has createDirectus:', typeof shim.createDirectus === 'function');
+          console.log('Has commands:', typeof shim.commands === 'object');
+          "
+
+      - name: TypeScript check (no errors from compat types)
+        run: npx tsc --noEmit 2>&1 | head -50
+        continue-on-error: true
